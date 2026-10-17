@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fourier Draws Anything</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<style>
+  :root {
+    --panel: #26292c; --button: #34383c; --text: #e8e4d8; --dim: #8b9096; --accent: #ff5a1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--panel); color: var(--text);
+    font: 12px Menlo, Consolas, monospace;
+    height: 100vh; display: flex;
+  }
+  #stage {
+    flex: 1; min-width: 0; padding: 16px; background: #1b1d1f;
+    display: flex; align-items: center; justify-content: center;
+  }
+  aside {
+    width: 460px; flex-shrink: 0; overflow-y: auto; padding: 20px;
+    border-left: 1px solid var(--button);
+  }
+  h1 { margin: 0 0 18px; font-size: 14px; letter-spacing: 0.04em; }
+  .group { display: flex; align-items: center; gap: 2px; margin-bottom: 18px; }
+  .depth { gap: 10px; }
+  .depth label { color: var(--dim); }
+  button {
+    font: inherit; color: var(--text); background: var(--button);
+    border: 0; padding: 8px 14px; cursor: pointer;
+  }
+  button.active { background: var(--accent); color: #fff; }
+  button#clear { margin-left: 14px; }
+  button#toggle-fit { margin-left: auto; }
+  #fit[hidden] { display: none; }
+  input[type=number] {
+    font: inherit; width: 68px; padding: 6px; text-align: center;
+    color: var(--text); background: var(--button); border: 1px solid var(--dim);
+  }
+  input[type=number]:focus { outline: none; border-color: var(--accent); }
+  input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  #paper {
+    position: relative; width: min(100%, calc((100vh - 32px) * 1.6)); aspect-ratio: 960 / 600;
+    touch-action: none; cursor: crosshair;
+    background-color: #f3eee0;
+    background-image:
+      linear-gradient(#a9bfd1 1px, transparent 1px),
+      linear-gradient(90deg, #a9bfd1 1px, transparent 1px),
+      linear-gradient(#cfdbe4 1px, transparent 1px),
+      linear-gradient(90deg, #cfdbe4 1px, transparent 1px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.25 0 0 0 0 0.15 0 0 0 0.09 0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 8.333% 13.333%, 8.333% 13.333%, 2.0833% 3.3333%, 2.0833% 3.3333%, 300px 300px;
+  }
+  #paper canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #fit { pointer-events: none; }
+  #equation { border-top: 1px solid var(--button); padding-top: 14px; }
+  #equation:empty { display: none; }
+  #equation .row { overflow-x: auto; padding: 2px 0 6px; }
+  #equation .row > div { line-height: 2; }
+  #equation .katex { font-size: 1.15em; }
+  #equation .katex-display { margin: 0.2em 0; }
+  #equation .row:nth-child(odd) { color: var(--dim); }
+  #equation .row:nth-child(4n) { margin-bottom: 1.2em; }
+  #equation .copy {
+    display: block; margin-left: auto; padding: 5px 7px; line-height: 0; color: var(--dim);
+  }
+  #equation .copy:hover { color: var(--text); }
+  #curve-dot {
+    position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+    border-radius: 50%; background: #ffd000; border: 2px solid #3a3200; pointer-events: none;
+  }
+  #tooltip {
+    position: fixed; z-index: 10; pointer-events: none; padding: 8px 16px 12px;
+    background: var(--panel); color: var(--text); border: 1px solid var(--accent);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); width: 520px; max-width: calc(100vw - 16px); line-height: 1.9;
+  }
+  #tooltip .katex-display { margin: 0.3em 0; }
+  #tooltip-point { color: var(--dim); padding-top: 4px; }
+  @media (max-width: 900px) {
+    body { height: auto; flex-direction: column; }
+    #paper { width: 100%; }
+    aside { width: 100%; border-left: 0; border-top: 1px solid var(--button); }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="paper">
+    <canvas id="ink" width="960" height="600"></canvas>
+    <canvas id="fit" width="960" height="600"></canvas>
+    <div id="curve-dot" hidden></div>
+  </div>
+</div>
+<aside>
+  <h1>FOURIER DRAWS ANYTHING</h1>
+  <div class="group">
+    <button id="marker" class="active">MARKER</button>
+    <button id="eraser">ERASER</button>
+    <button id="clear">CLEAR</button>
+    <button id="toggle-fit" class="active">SHOW FITTED LINE</button>
+  </div>
+  <div class="group depth">
+    <label for="depth-number">DEPTH N</label>
+    <input id="depth-slider" type="range" min="0" max="100" value="3">
+    <input id="depth-number" type="number" min="0" max="250" value="3">
+  </div>
+  <div id="equation"></div>
+</aside>
+<div id="tooltip" hidden>
+  <div id="tooltip-equations"></div>
+  <div id="tooltip-point"></div>
+</div>
+
+<script>
+const CANVAS_WIDTH = 960, CANVAS_HEIGHT = 600;
+const MARKER_WIDTH = 3, ERASER_WIDTH = 30;
+const MAX_DEPTH = 250;
+
+const paper = document.getElementById("paper");
+const inkCanvas = document.getElementById("ink");
+const fitCanvas = document.getElementById("fit");
+const ink = inkCanvas.getContext("2d");
+const fit = fitCanvas.getContext("2d");
+const equation = document.getElementById("equation");
+const tooltip = document.getElementById("tooltip");
+const tooltipEquations = document.getElementById("tooltip-equations");
+const tooltipPoint = document.getElementById("tooltip-point");
+const curveDot = document.getElementById("curve-dot");
+const TERMS_SHOWN = 8;
+const ICON_ATTRS = 'width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+const COPY_ICON = `<svg ${ICON_ATTRS}><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`;
+const FAIL_ICON = `<svg ${ICON_ATTRS}><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+const CHECK_ICON = `<svg ${ICON_ATTRS}><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
+const depthSlider = document.getElementById("depth-slider");
+const depthNumber = document.getElementById("depth-number");
+const markerButton = document.getElementById("marker");
+const eraserButton = document.getElementById("eraser");
+
+let drawnPoints = [];
+let isErasing = false;
+let previousMouse = null;
+let latestRequestId = 0;
+let fitCurve = null;
+let isFitVisible = true;
+
+function selectTool(tool) {
+  isErasing = tool === "eraser";
+  markerButton.classList.toggle("active", !isErasing);
+  eraserButton.classList.toggle("active", isErasing);
+}
+
+function mousePosition(event) {
+  const box = paper.getBoundingClientRect();
+  return [
+    (event.clientX - box.left) * CANVAS_WIDTH / box.width,
+    (event.clientY - box.top) * CANVAS_HEIGHT / box.height,
+  ];
+}
+
+function pointsBetween(x0, y0, x1, y1) {
+  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  const points = [];
+  for (let i = 0; i <= steps; i++) {
+    points.push([x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps]);
+  }
+  return points;
+}
+
+function strokeSegment(x0, y0, x1, y1) {
+  ink.globalCompositeOperation = isErasing ? "destination-out" : "source-over";
+  ink.strokeStyle = "#1f2328";
+  ink.lineWidth = isErasing ? ERASER_WIDTH : MARKER_WIDTH;
+  ink.lineCap = "round";
+  ink.beginPath();
+  ink.moveTo(x0, y0);
+  ink.lineTo(x1, y1);
+  ink.stroke();
+}
+
+function eraseAround(eraserPositions) {
+  const radius = ERASER_WIDTH / 2;
+  drawnPoints = drawnPoints.filter(([px, py]) =>
+    !eraserPositions.some(([ex, ey]) => (px - ex) ** 2 + (py - ey) ** 2 <= radius ** 2)
+  );
+}
+
+paper.addEventListener("pointerdown", (event) => {
+  paper.setPointerCapture(event.pointerId);
+  previousMouse = mousePosition(event);
+  tooltip.hidden = true;
+  curveDot.hidden = true;
+  onMouseMove(event);
+});
+
+paper.addEventListener("pointermove", (event) => {
+  if (previousMouse) onMouseMove(event);
+  else onHover(event);
+});
+
+paper.addEventListener("pointerleave", () => {
+  tooltip.hidden = true;
+  curveDot.hidden = true;
+});
+
+paper.addEventListener("pointerup", () => {
+  previousMouse = null;
+  redrawFit();
+});
+
+function onMouseMove(event) {
+  const [x0, y0] = previousMouse;
+  const [x1, y1] = mousePosition(event);
+  const segmentPoints = pointsBetween(x0, y0, x1, y1);
+
+  if (isErasing) eraseAround(segmentPoints);
+  else drawnPoints.push(...segmentPoints);
+
+  strokeSegment(x0, y0, x1, y1);
+  previousMouse = [x1, y1];
+}
+
+function clearCanvas() {
+  drawnPoints = [];
+  ink.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  fit.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  fitCurve = null;
+  hideEquation();
+}
+
+function signedTerm(value, trig, n, period) {
+  const sign = value < 0 ? "-" : "+";
+  return `${sign}\\,${Math.abs(value).toFixed(2)}\\${trig}\\frac{2\\pi\\cdot${n}\\,t}{${period}}`;
+}
+
+function seriesLatex(name, period, depth, { a0, a, b }) {
+  const general =
+    `${name}(t) = \\frac{a_0}{2} + \\sum_{n=1}^{${depth}} \\left[ a_n \\cos\\frac{2\\pi n t}{${period}} + b_n \\sin\\frac{2\\pi n t}{${period}} \\right]`;
+
+  let expanded = `${name}(t) = ${(a0 / 2).toFixed(2)}`;
+  for (let i = 0; i < Math.min(depth, TERMS_SHOWN); i++) {
+    const n = i + 1;
+    expanded += ` ${signedTerm(a[i], "cos", n, period)} ${signedTerm(b[i], "sin", n, period)}`;
+  }
+  if (depth > TERMS_SHOWN) expanded += ` + \\cdots \\ (${depth - TERMS_SHOWN}\\text{ more terms})`;
+
+  return [general, expanded];
+}
+
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  return copied;
+}
+
+function renderMath(latex, parent, displayMode) {
+  katex.render(latex, parent, { displayMode, throwOnError: false, fleqn: true });
+}
+
+function makeEquationRow(latex, displayMode) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const copyButton = document.createElement("button");
+  copyButton.className = "copy";
+  copyButton.title = "Copy LaTeX";
+  copyButton.setAttribute("aria-label", "Copy LaTeX");
+  copyButton.innerHTML = COPY_ICON;
+  copyButton.addEventListener("click", async () => {
+    const copied = await copyText(latex);
+    copyButton.innerHTML = copied ? CHECK_ICON : FAIL_ICON;
+    setTimeout(() => (copyButton.innerHTML = COPY_ICON), 1200);
+  });
+  const math = document.createElement("div");
+  renderMath(latex, math, displayMode);
+  row.append(copyButton, math);
+  return row;
+}
+
+function showEquation(period, depth, xCoefficients, yCoefficients) {
+  const [xGeneral, xExpanded] = seriesLatex("x", period, depth, xCoefficients);
+  const [yGeneral, yExpanded] = seriesLatex("y", period, depth, yCoefficients);
+  equation.replaceChildren(
+    makeEquationRow(xGeneral, true),
+    makeEquationRow(xExpanded, false),
+    makeEquationRow(yGeneral, true),
+    makeEquationRow(yExpanded, false),
+  );
+
+  tooltipEquations.replaceChildren();
+  for (const latex of [xExpanded, yExpanded]) {
+    const math = document.createElement("div");
+    renderMath(latex, math, false);
+    tooltipEquations.append(math);
+  }
+}
+
+function hideEquation() {
+  equation.replaceChildren();
+  tooltip.hidden = true;
+  curveDot.hidden = true;
+}
+
+function nearestCurvePoint(mouseX, mouseY) {
+  if (!fitCurve) return null;
+  const maxDistance = 14;
+  let best = null;
+  let bestDistance = maxDistance * maxDistance;
+  for (let t = 0; t < fitCurve.x.length; t++) {
+    const distance = (fitCurve.x[t] - mouseX) ** 2 + (fitCurve.y[t] - mouseY) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = t;
+    }
+  }
+  return best;
+}
+
+function onHover(event) {
+  if (!isFitVisible) return;
+  const [mouseX, mouseY] = mousePosition(event);
+  const t = nearestCurvePoint(mouseX, mouseY);
+  if (t === null) {
+    tooltip.hidden = true;
+    curveDot.hidden = true;
+    return;
+  }
+
+  const x = fitCurve.x[t], y = fitCurve.y[t];
+  tooltipPoint.textContent = `t = ${t}   →   (x, y) = (${x.toFixed(1)}, ${y.toFixed(1)})`;
+  curveDot.style.left = `${x / CANVAS_WIDTH * 100}%`;
+  curveDot.style.top = `${y / CANVAS_HEIGHT * 100}%`;
+  curveDot.hidden = false;
+
+  tooltip.hidden = false;
+  const left = Math.min(event.clientX + 18, window.innerWidth - tooltip.offsetWidth - 8);
+  const top = Math.min(event.clientY + 18, window.innerHeight - tooltip.offsetHeight - 8);
+  tooltip.style.left = `${Math.max(left, 8)}px`;
+  tooltip.style.top = `${Math.max(top, 8)}px`;
+}
+
+async function redrawFit() {
+  const requestId = ++latestRequestId;
+  const depth = Math.min(Math.max(parseInt(depthNumber.value) || 0, 0), MAX_DEPTH);
+
+  if (drawnPoints.length < 2) {
+    fit.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    fitCurve = null;
+    hideEquation();
+    return;
+  }
+
+  const response = await fetch("/api/fit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ points: drawnPoints, depth }),
+  });
+  if (!response.ok || requestId !== latestRequestId) return;
+  const { x, y, period, x_coefficients, y_coefficients } = await response.json();
+  fitCurve = { x, y };
+  showEquation(period, depth, x_coefficients, y_coefficients);
+
+  fit.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  if (x.length === 0) return;
+  fit.beginPath();
+  fit.moveTo(x[0], y[0]);
+  for (let i = 1; i < x.length; i++) fit.lineTo(x[i], y[i]);
+  fit.closePath();
+  fit.lineJoin = "round";
+  fit.strokeStyle = "#3a3200";
+  fit.lineWidth = 5;
+  fit.stroke();
+  fit.strokeStyle = "#ffd000";
+  fit.lineWidth = 3;
+  fit.stroke();
+}
+
+depthSlider.addEventListener("input", () => {
+  depthNumber.value = depthSlider.value;
+  redrawFit();
+});
+depthNumber.addEventListener("input", () => {
+  depthSlider.value = Math.min(depthNumber.value, depthSlider.max);
+  redrawFit();
+});
+markerButton.addEventListener("click", () => selectTool("marker"));
+eraserButton.addEventListener("click", () => selectTool("eraser"));
+document.getElementById("toggle-fit").addEventListener("click", (event) => {
+  isFitVisible = !isFitVisible;
+  event.currentTarget.classList.toggle("active", isFitVisible);
+  fitCanvas.hidden = !isFitVisible;
+  tooltip.hidden = true;
+  curveDot.hidden = true;
+});
+document.getElementById("clear").addEventListener("click", clearCanvas);
+</script>
+</body>
+</html>
